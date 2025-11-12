@@ -1,58 +1,84 @@
-name: CI/CD Debug for GCS access
+name: CI/CD Pipeline with Load Testing
+
 on:
-  workflow_dispatch:
   push:
     branches: [ main ]
+  workflow_dispatch:
 
 env:
   PROJECT_ID: theta-index-472515-d8
-  BUCKET: mlops-course-dulcet-bastion-452612-v4-unique
-  MODEL_PATH: my-models/feature-store-week-3/model.joblib
+  GKE_CLUSTER: iris-cluster
+  GKE_ZONE: us-central1-a
+  DEPLOYMENT_NAME: iris-api
+  IMAGE: iris-api
+  REPOSITORY: iris-repo
+  NAMESPACE: iris-classifier
 
 jobs:
-  debug:
+  deploy:
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
-
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v3
 
-    - name: Setup gcloud (explicit project)
-      uses: google-github-actions/setup-gcloud@v1
-      with:
-        project_id: ${{ env.PROJECT_ID }}
+      - name: Setup Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+        with:
+          project_id: ${{ env.PROJECT_ID }}
 
-    - name: Authenticate to GCP (Service Account Key)
-      if: ${{ secrets.GCP_SA_KEY != '' }}
-      uses: google-github-actions/auth@v1
-      with:
-        credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - name: Authenticate GCP
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-    - name: Debug: show identity & test access
-      run: |
-        echo "---- gcloud auth list ----"
-        gcloud auth list || true
+      - name: Configure Docker
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev
 
-        echo "---- gcloud config ----"
-        gcloud config list --format="yaml" || true
+      - name: Get Model from GCS
+        run: |
+          gsutil cp gs://mlops-course-dulcet-bastion-452612-v4-unique/my-models/feature-store-week-3/model.joblib .
 
-        echo "---- whoami (curl metadata) ----"
-        # this will only work on GCP VM, but harmless otherwise
-        curl -s -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email || true
+      - name: Build and Push Image
+        run: |
+          docker build -t us-central1-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$IMAGE:latest .
+          docker push us-central1-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$IMAGE:latest
 
-        echo "---- gsutil version ----"
-        gsutil version -l || true
+      - name: Deploy to GKE
+        run: |
+          gcloud container clusters get-credentials $GKE_CLUSTER --zone $GKE_ZONE
+          kubectl apply -f k8s/namespace.yaml
+          kubectl apply -f k8s/deployment.yaml
+          kubectl apply -f k8s/service.yaml
+          kubectl apply -f k8s/hpa.yaml
+          kubectl rollout status deployment/$DEPLOYMENT_NAME -n $NAMESPACE
 
-        echo "---- Try listing object metadata ----"
-        gsutil ls -L gs://$BUCKET/$MODEL_PATH || true
+      - name: Get Service IP
+        id: get-ip
+        run: |
+          EXTERNAL_IP=""
+          while [ -z "$EXTERNAL_IP" ]; do
+            EXTERNAL_IP=$(kubectl get svc iris-api -n $NAMESPACE --template="{{range .status.loadBalancer.ingress}}{{.ip}}{{end}}")
+            [ -z "$EXTERNAL_IP" ] && sleep 10
+          done
+          echo "ip=$EXTERNAL_IP" >> $GITHUB_OUTPUT
 
-        echo "---- Try cp (dry-run) ----"
-        gsutil cp -n gs://$BUCKET/$MODEL_PATH . || true
+      - name: Load Test
+        run: |
+          sudo apt-get update && sudo apt-get install -y wrk
+          IP=${{ steps.get-ip.outputs.ip }}
 
-    - name: Get Model from GCS (final attempt)
-      run: |
-        echo "Attempting final cp..."
-        gsutil cp gs://$BUCKET/$MODEL_PATH .
+          echo "Test 1: 1000 connections with 1 pod"
+          kubectl scale deployment/iris-api --replicas=1 -n $NAMESPACE
+          sleep 30
+
+          echo 'wrk.method = "POST"' > post.lua
+          echo 'wrk.body = '"'"'{"sepal_length": 5.1, "sepal_width": 3.5, "petal_length": 1.4, "petal_width": 0.2}'"'"'' >> post.lua
+          echo 'wrk.headers["Content-Type"] = "application/json"' >> post.lua
+
+          wrk -t8 -c1000 -d30s -s post.lua http://$IP/predict/
+
+          echo "Test 2: HPA scaling test with 2000 connections"
+          wrk -t12 -c2000 -d60s -s post.lua http://$IP/predict/
+
+          kubectl get pods -n $NAMESPACE
+          kubectl get hpa -n $NAMESPACE
