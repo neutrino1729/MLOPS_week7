@@ -12,110 +12,124 @@ env:
   IMAGE: iris-api
   REPOSITORY: iris-repo
   NAMESPACE: iris-classifier
+  MODEL_GCS_PATH: gs://mlops-course-dulcet-bastion-452612-v4-unique/my-models/feature-store-week-3/model.joblib
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     permissions:
-      contents: 'read'
-      id-token: 'write'
+      contents: read
+      id-token: write   # needed for workload identity (optional, kept for future)
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4   # v4 is stable on 2025 runners
 
-      - name: Setup Cloud SDK
-        uses: google-github-actions/setup-gcloud@v1
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
 
       - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v1
+        uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: Download Model from GCS
-        uses: google-github-actions/download-cloud-storage@v1
-        with:
-          source: gs://mlops-course-dulcet-bastion-452612-v4-unique/my-models/feature-store-week-3/model.joblib
-          destination: model.joblib
-
-      - name: Verify Model Downloaded
+      # ---- Export ADC so gsutil can use the key ----
+      - name: Export GCP Credentials for gsutil
         run: |
-          echo "Listing files in directory:"
-          ls -la
-          echo "Model file info:"
+          echo '${{ secrets.GCP_SA_KEY }}' > $HOME/gcp-key.json
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$HOME/gcp-key.json" >> $GITHUB_ENV
+
+      # ---- Download model using gsutil (guaranteed to work) ----
+      - name: Download Model from GCS
+        run: |
+          echo "Downloading model from $MODEL_GCS_PATH ..."
+          gsutil cp "$MODEL_GCS_PATH" ./model.joblib
+          echo "Model downloaded:"
+          ls -lh model.joblib
+
+      # ---- Optional: verify file integrity (size, type) ----
+      - name: Verify Model File
+        run: |
           file model.joblib
-          echo "Model size:"
           du -h model.joblib
 
-      - name: Configure Docker for Artifact Registry
+      # ---- Configure Docker for Artifact Registry ----
+      - name: Configure Docker Auth
         run: |
-          gcloud auth configure-docker us-central1-docker.pkg.dev
+          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
 
-      - name: Build and Push Docker Image
+      # ---- Build & Push Container Image ----
+      - name: Build and Push Image
         run: |
-          docker build -t us-central1-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$IMAGE:latest .
-          docker push us-central1-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$IMAGE:latest
+          IMAGE_TAG=us-central1-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$IMAGE:latest
+          docker build -t $IMAGE_TAG .
+          docker push $IMAGE_TAG
 
-      - name: Get GKE Cluster Credentials
+      # ---- Get GKE Credentials ----
+      - name: Fetch GKE Cluster Credentials
         run: |
-          gcloud container clusters get-credentials $GKE_CLUSTER --zone $GKE_ZONE --project $PROJECT_ID
+          gcloud container clusters get-credentials $GKE_CLUSTER \
+            --zone $GKE_ZONE --project $PROJECT_ID
 
-      - name: Deploy Kubernetes Resources
+      # ---- Apply Kubernetes Manifests ----
+      - name: Deploy to GKE
         run: |
           kubectl apply -f k8s/namespace.yaml
           kubectl apply -f k8s/deployment.yaml
           kubectl apply -f k8s/service.yaml
           kubectl apply -f k8s/hpa.yaml
-          kubectl rollout status deployment/$DEPLOYMENT_NAME -n $NAMESPACE --timeout=300s
+          kubectl rollout status deployment/$DEPLOYMENT_NAME -n $NAMESPACE --timeout=5m
 
-      - name: Get External IP of LoadBalancer
-        id: get-ip
+      # ---- Wait for External IP ----
+      - name: Get LoadBalancer IP
+        id: ip
         run: |
-          echo "Waiting for LoadBalancer IP..."
-          EXTERNAL_IP=""
-          for i in $(seq 1 60); do
-            EXTERNAL_IP=$(kubectl get svc iris-api-service -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
-            if [ -n "$EXTERNAL_IP" ]; then
-              echo "LoadBalancer IP found: $EXTERNAL_IP"
-              echo "ip=$EXTERNAL_IP" >> $GITHUB_OUTPUT
-              break
+          echo "Waiting for LoadBalancer IP (max 10 min)..."
+          for i in {1..60}; do
+            IP=$(kubectl get svc iris-api-service -n $NAMESPACE \
+                 -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+            if [[ -n "$IP" ]]; then
+              echo "ip=$IP" >> $GITHUB_OUTPUT
+              echo "External IP: $IP"
+              exit 0
             fi
-            echo "Attempt $i: IP not assigned yet. Waiting 10s..."
+            echo "Attempt $i: IP not ready, sleeping 10s..."
             sleep 10
           done
-          if [ -z "$EXTERNAL_IP" ]; then
-            echo "Failed to get external IP after 10 minutes"
-            exit 1
-          fi
+          echo "Timed out waiting for IP"
+          exit 1
 
-      - name: Install wrk (Load Testing Tool)
+      # ---- Install wrk for load testing ----
+      - name: Install wrk
         run: |
-          sudo apt-get update
+          sudo apt-get update -qq
           sudo apt-get install -y wrk
 
-      - name: Create Lua Script for POST Request
+      # ---- Create Lua script for POST body ----
+      - name: Create POST Lua Script
         run: |
-          cat > post.lua << 'EOF'
+          cat > post.lua <<'EOF'
           wrk.method = "POST"
-          wrk.body = '{"sepal_length": 5.1, "sepal_width": 3.5, "petal_length": 1.4, "petal_width": 0.2}'
+          wrk.body   = '{"sepal_length": 5.1, "sepal_width": 3.5, "petal_length": 1.4, "petal_width": 0.2}'
           wrk.headers["Content-Type"] = "application/json"
           EOF
 
-      - name: Load Test 1 - 1000 Connections (1 Pod)
+      # ---- Load Test 1: 1000 connections, 1 pod ----
+      - name: Load Test – 1000 Connections (1 Pod)
         run: |
-          echo "Scaling deployment to 1 replica..."
           kubectl scale deployment/$DEPLOYMENT_NAME --replicas=1 -n $NAMESPACE
           sleep 30
-          echo "Starting load test: 1000 connections, 8 threads, 30s duration..."
-          wrk -t8 -c1000 -d30s -s post.lua http://${{ steps.get-ip.outputs.ip }}/predict/
+          echo "Running wrk: 8 threads, 1000 connections, 30s"
+          wrk -t8 -c1000 -d30s -s post.lua http://${{ steps.ip.outputs.ip }}/predict/
 
-      - name: Load Test 2 - 2000 Connections (HPA Scaling Test)
+      # ---- Load Test 2: 2000 connections (HPA trigger) ----
+      - name: Load Test – 2000 Connections (HPA Scaling)
         run: |
-          echo "Starting HPA scaling test: 2000 connections, 12 threads, 60s duration..."
-          wrk -t12 -c2000 -d60s -s post.lua http://${{ steps.get-ip.outputs.ip }}/predict/ || true
-          echo "Final pod count:"
+          echo "Running wrk: 12 threads, 2000 connections, 60s"
+          wrk -t12 -c2000 -d60s -s post.lua http://${{ steps.ip.outputs.ip }}/predict/ || true
+          echo "=== Pod status ==="
           kubectl get pods -n $NAMESPACE -o wide
-          echo "HPA status:"
+          echo "=== HPA status ==="
           kubectl get hpa -n $NAMESPACE
-          echo "Top pods:"
+          echo "=== Resource usage ==="
           kubectl top pods -n $NAMESPACE
