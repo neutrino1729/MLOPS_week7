@@ -1,0 +1,85 @@
+====================================================
+IRIS CLASSIFIER LOAD TEST REPORT
+====================================================
+Date: Wed Nov 12 19:45:09 UTC 2025
+API URL: http://35.238.193.245
+
+==== FINAL POD STATUS ====
+NAME                        READY   STATUS    RESTARTS   AGE     IP           NODE                                          NOMINATED NODE   READINESS GATES
+iris-api-6bbc79b679-b6j52   1/1     Running   0          7m10s   10.64.0.10   gke-iris-cluster-default-pool-fd9ed52d-xgv1   <none>           <none>
+iris-api-6bbc79b679-ccmx6   1/1     Running   0          32s     10.64.1.17   gke-iris-cluster-default-pool-fd9ed52d-krj5   <none>           <none>
+iris-api-6bbc79b679-rr5x6   1/1     Running   0          32s     10.64.0.11   gke-iris-cluster-default-pool-fd9ed52d-xgv1   <none>           <none>
+
+==== HPA STATUS ====
+NAME           REFERENCE             TARGETS        MINPODS   MAXPODS   REPLICAS   AGE
+iris-api-hpa   Deployment/iris-api   cpu: 71%/50%   1         3         3          44m
+
+==== HPA DETAILS ====
+Name:                                                  iris-api-hpa
+Namespace:                                             iris-classifier
+Labels:                                                <none>
+Annotations:                                           <none>
+CreationTimestamp:                                     Wed, 12 Nov 2025 19:01:04 +0000
+Reference:                                             Deployment/iris-api
+Metrics:                                               ( current / target )
+  resource cpu on pods  (as a percentage of request):  71% (71m) / 50%
+Min replicas:                                          1
+Max replicas:                                          3
+Deployment pods:                                       3 current / 3 desired
+Conditions:
+  Type            Status  Reason               Message
+  ----            ------  ------               -------
+  AbleToScale     True    ScaleDownStabilized  recent recommendations were higher than current one, applying the highest recent recommendation
+  ScalingActive   True    ValidMetricFound     the HPA was able to successfully calculate a replica count from cpu resource utilization (percentage of request)
+  ScalingLimited  True    TooManyReplicas      the desired replica count is more than the maximum replica count
+Events:
+  Type     Reason                   Age                   From                       Message
+  ----     ------                   ----                  ----                       -------
+  Warning  FailedGetResourceMetric  41m (x7 over 43m)     horizontal-pod-autoscaler  did not receive metrics for targeted pods (pods might be unready)
+  Warning  FailedGetResourceMetric  7m8s (x113 over 43m)  horizontal-pod-autoscaler  No recommendation
+  Normal   SuccessfulRescale        5m32s                 horizontal-pod-autoscaler  New size: 2; reason: cpu resource utilization (percentage of request) below target
+  Normal   SuccessfulRescale        5m17s                 horizontal-pod-autoscaler  New size: 1; reason: cpu resource utilization (percentage of request) below target
+  Normal   SuccessfulRescale        33s (x2 over 11m)     horizontal-pod-autoscaler  New size: 3; reason: cpu resource utilization (percentage of request) above target
+  Normal   HpaProfilePerformance    33s (x4 over 11m)     horizontal-pod-autoscaler  The HPA rescaled target based on performance profile
+
+==== RESOURCE USAGE ====
+NAME                        CPU(cores)   MEMORY(bytes)   
+iris-api-6bbc79b679-b6j52   168m         103Mi           
+iris-api-6bbc79b679-ccmx6   231m         106Mi           
+iris-api-6bbc79b679-rr5x6   238m         101Mi           
+
+==== RECENT EVENTS ====
+7m13s       Normal    Pulled                    pod/iris-api-6bbc79b679-kbp46          Successfully pulled image "us-central1-docker.pkg.dev/theta-index-472515-d8/iris-repo/iris-api:latest" in 781ms (781ms including waiting). Image size: 156176314 bytes.
+7m11s       Normal    SuccessfulDelete          replicaset/iris-api-678d4bd8d5         Deleted pod: iris-api-678d4bd8d5-tkn2t
+7m11s       Normal    Killing                   pod/iris-api-678d4bd8d5-tkn2t          Stopping container iris-api
+7m11s       Normal    SuccessfulCreate          replicaset/iris-api-6bbc79b679         Created pod: iris-api-6bbc79b679-b6j52
+7m10s       Normal    Pulling                   pod/iris-api-6bbc79b679-b6j52          Pulling image "us-central1-docker.pkg.dev/theta-index-472515-d8/iris-repo/iris-api:latest"
+7m10s       Normal    Created                   pod/iris-api-6bbc79b679-b6j52          Created container: iris-api
+7m10s       Normal    Started                   pod/iris-api-6bbc79b679-b6j52          Started container iris-api
+7m10s       Normal    Pulled                    pod/iris-api-6bbc79b679-b6j52          Successfully pulled image "us-central1-docker.pkg.dev/theta-index-472515-d8/iris-repo/iris-api:latest" in 259ms (259ms including waiting). Image size: 156176314 bytes.
+7m9s        Normal    Killing                   pod/iris-api-678d4bd8d5-frsqv          Stopping container iris-api
+7m9s        Normal    SuccessfulDelete          replicaset/iris-api-678d4bd8d5         Deleted pod: iris-api-678d4bd8d5-frsqv
+7m8s        Warning   FailedGetResourceMetric   horizontalpodautoscaler/iris-api-hpa   No recommendation
+5m32s       Normal    SuccessfulDelete          replicaset/iris-api-6bbc79b679         Deleted pod: iris-api-6bbc79b679-m8q7z
+5m32s       Normal    Killing                   pod/iris-api-6bbc79b679-m8q7z          Stopping container iris-api
+5m32s       Normal    SuccessfulRescale         horizontalpodautoscaler/iris-api-hpa   New size: 2; reason: cpu resource utilization (percentage of request) below target
+5m17s       Normal    SuccessfulDelete          replicaset/iris-api-6bbc79b679         Deleted pod: iris-api-6bbc79b679-kbp46
+5m17s       Normal    Killing                   pod/iris-api-6bbc79b679-kbp46          Stopping container iris-api
+5m17s       Normal    SuccessfulRescale         horizontalpodautoscaler/iris-api-hpa   New size: 1; reason: cpu resource utilization (percentage of request) below target
+33s         Normal    SuccessfulRescale         horizontalpodautoscaler/iris-api-hpa   New size: 3; reason: cpu resource utilization (percentage of request) above target
+33s         Normal    HpaProfilePerformance     horizontalpodautoscaler/iris-api-hpa   The HPA rescaled target based on performance profile
+33s         Normal    SuccessfulCreate          replicaset/iris-api-6bbc79b679         Created pod: iris-api-6bbc79b679-rr5x6
+33s         Normal    SuccessfulCreate          replicaset/iris-api-6bbc79b679         Created pod: iris-api-6bbc79b679-ccmx6
+33s         Normal    Pulling                   pod/iris-api-6bbc79b679-rr5x6          Pulling image "us-central1-docker.pkg.dev/theta-index-472515-d8/iris-repo/iris-api:latest"
+33s         Normal    Pulling                   pod/iris-api-6bbc79b679-ccmx6          Pulling image "us-central1-docker.pkg.dev/theta-index-472515-d8/iris-repo/iris-api:latest"
+33s         Normal    ScalingReplicaSet         deployment/iris-api                    (combined from similar events): Scaled up replica set iris-api-6bbc79b679 from 1 to 3
+32s         Normal    Started                   pod/iris-api-6bbc79b679-rr5x6          Started container iris-api
+32s         Normal    Created                   pod/iris-api-6bbc79b679-rr5x6          Created container: iris-api
+32s         Normal    Pulled                    pod/iris-api-6bbc79b679-rr5x6          Successfully pulled image "us-central1-docker.pkg.dev/theta-index-472515-d8/iris-repo/iris-api:latest" in 214ms (214ms including waiting). Image size: 156176314 bytes.
+32s         Normal    Started                   pod/iris-api-6bbc79b679-ccmx6          Started container iris-api
+32s         Normal    Created                   pod/iris-api-6bbc79b679-ccmx6          Created container: iris-api
+32s         Normal    Pulled                    pod/iris-api-6bbc79b679-ccmx6          Successfully pulled image "us-central1-docker.pkg.dev/theta-index-472515-d8/iris-repo/iris-api:latest" in 186ms (186ms including waiting). Image size: 156176314 bytes.
+
+==== DEPLOYMENT INFO ====
+NAME       READY   UP-TO-DATE   AVAILABLE   AGE   CONTAINERS   IMAGES                                                                       SELECTOR
+iris-api   3/3     3            3           17m   iris-api     us-central1-docker.pkg.dev/theta-index-472515-d8/iris-repo/iris-api:latest   app=iris-api

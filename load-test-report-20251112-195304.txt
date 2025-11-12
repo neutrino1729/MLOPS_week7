@@ -1,0 +1,37 @@
+=== LOAD TEST REPORT ===
+Date: Wed Nov 12 19:53:04 UTC 2025
+
+NAME                        READY   STATUS    RESTARTS   AGE     IP           NODE                                          NOMINATED NODE   READINESS GATES
+iris-api-6bbc79b679-5j2zm   1/1     Running   0          2m26s   10.64.0.12   gke-iris-cluster-default-pool-fd9ed52d-xgv1   <none>           <none>
+iris-api-6bbc79b679-ccmx6   1/1     Running   0          8m27s   10.64.1.17   gke-iris-cluster-default-pool-fd9ed52d-krj5   <none>           <none>
+iris-api-6bbc79b679-mkmtm   1/1     Running   0          2m26s   10.64.0.13   gke-iris-cluster-default-pool-fd9ed52d-xgv1   <none>           <none>
+
+NAME           REFERENCE             TARGETS         MINPODS   MAXPODS   REPLICAS   AGE
+iris-api-hpa   Deployment/iris-api   cpu: 130%/50%   1         3         3          52m
+
+Name:                                                  iris-api-hpa
+Namespace:                                             iris-classifier
+Labels:                                                <none>
+Annotations:                                           <none>
+CreationTimestamp:                                     Wed, 12 Nov 2025 19:01:04 +0000
+Reference:                                             Deployment/iris-api
+Metrics:                                               ( current / target )
+  resource cpu on pods  (as a percentage of request):  130% (130m) / 50%
+Min replicas:                                          1
+Max replicas:                                          3
+Deployment pods:                                       3 current / 3 desired
+Conditions:
+  Type            Status  Reason               Message
+  ----            ------  ------               -------
+  AbleToScale     True    ScaleDownStabilized  recent recommendations were higher than current one, applying the highest recent recommendation
+  ScalingActive   True    ValidMetricFound     the HPA was able to successfully calculate a replica count from cpu resource utilization (percentage of request)
+  ScalingLimited  True    TooManyReplicas      the desired replica count is more than the maximum replica count
+Events:
+  Type     Reason                   Age                  From                       Message
+  ----     ------                   ----                 ----                       -------
+  Warning  FailedGetResourceMetric  49m (x7 over 51m)    horizontal-pod-autoscaler  did not receive metrics for targeted pods (pods might be unready)
+  Warning  FailedGetResourceMetric  15m (x113 over 51m)  horizontal-pod-autoscaler  No recommendation
+  Normal   SuccessfulRescale        13m                  horizontal-pod-autoscaler  New size: 2; reason: cpu resource utilization (percentage of request) below target
+  Normal   SuccessfulRescale        13m                  horizontal-pod-autoscaler  New size: 1; reason: cpu resource utilization (percentage of request) below target
+  Normal   SuccessfulRescale        2m26s (x3 over 18m)  horizontal-pod-autoscaler  New size: 3; reason: cpu resource utilization (percentage of request) above target
+  Normal   HpaProfilePerformance    2m26s (x5 over 18m)  horizontal-pod-autoscaler  The HPA rescaled target based on performance profile
