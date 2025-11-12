@@ -1,4 +1,4 @@
-# Iris Classification API with Kubernetes Auto-scalings
+# Iris Classification API with Kubernetes Auto-scalings-
 
 ## MLOps Week 7 Assignment
 - FastAPI ML model deployment
