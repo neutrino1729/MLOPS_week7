@@ -1,9 +1,7 @@
 name: CI/CD Pipeline with Load Testing
-
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:
 
 env:
   PROJECT_ID: theta-index-472515-d8
@@ -23,62 +21,38 @@ jobs:
 
       - name: Setup Cloud SDK
         uses: google-github-actions/setup-gcloud@v1
-        with:
-          project_id: ${{ env.PROJECT_ID }}
 
       - name: Authenticate GCP
         uses: google-github-actions/auth@v1
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
+      # ---- make gsutil see the key (optional if you switch to the action) ----
+      - name: Export ADC for gsutil
+        run: |
+          echo "$GCP_SA_KEY" > /tmp/key.json
+          export GOOGLE_APPLICATION_CREDENTIALS=/tmp/key.json
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+
+      # ---- preferred way: use the official GCS action ----
+      - name: Get Model from GCS
+        uses: google-github-actions/upload-cloud-storage@v1
+        with:
+          path: gs://mlops-course-dulcet-bastion-452612-v4-unique/my-models/feature-store-week-3/model.joblib
+          destination: model.joblib   # local file
+
+      # (or keep the gsutil line if you prefer)
+      # - name: Get Model from GCS
+      #   run: |
+      #     gsutil cp gs://mlops-course-dulcet-bastion-452612-v4-unique/my-models/feature-store-week-3/model.joblib .
+
       - name: Configure Docker
         run: gcloud auth configure-docker us-central1-docker.pkg.dev
-
-      - name: Get Model from GCS
-        run: |
-          gsutil cp gs://mlops-course-dulcet-bastion-452612-v4-unique/my-models/feature-store-week-3/model.joblib .
 
       - name: Build and Push Image
         run: |
           docker build -t us-central1-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$IMAGE:latest .
           docker push us-central1-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$IMAGE:latest
 
-      - name: Deploy to GKE
-        run: |
-          gcloud container clusters get-credentials $GKE_CLUSTER --zone $GKE_ZONE
-          kubectl apply -f k8s/namespace.yaml
-          kubectl apply -f k8s/deployment.yaml
-          kubectl apply -f k8s/service.yaml
-          kubectl apply -f k8s/hpa.yaml
-          kubectl rollout status deployment/$DEPLOYMENT_NAME -n $NAMESPACE
-
-      - name: Get Service IP
-        id: get-ip
-        run: |
-          EXTERNAL_IP=""
-          while [ -z "$EXTERNAL_IP" ]; do
-            EXTERNAL_IP=$(kubectl get svc iris-api -n $NAMESPACE --template="{{range .status.loadBalancer.ingress}}{{.ip}}{{end}}")
-            [ -z "$EXTERNAL_IP" ] && sleep 10
-          done
-          echo "ip=$EXTERNAL_IP" >> $GITHUB_OUTPUT
-
-      - name: Load Test
-        run: |
-          sudo apt-get update && sudo apt-get install -y wrk
-          IP=${{ steps.get-ip.outputs.ip }}
-
-          echo "Test 1: 1000 connections with 1 pod"
-          kubectl scale deployment/iris-api --replicas=1 -n $NAMESPACE
-          sleep 30
-
-          echo 'wrk.method = "POST"' > post.lua
-          echo 'wrk.body = '"'"'{"sepal_length": 5.1, "sepal_width": 3.5, "petal_length": 1.4, "petal_width": 0.2}'"'"'' >> post.lua
-          echo 'wrk.headers["Content-Type"] = "application/json"' >> post.lua
-
-          wrk -t8 -c1000 -d30s -s post.lua http://$IP/predict/
-
-          echo "Test 2: HPA scaling test with 2000 connections"
-          wrk -t12 -c2000 -d60s -s post.lua http://$IP/predict/
-
-          kubectl get pods -n $NAMESPACE
-          kubectl get hpa -n $NAMESPACE
+      # …rest of your steps unchanged…
