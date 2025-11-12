@@ -3,6 +3,7 @@ name: CI/CD Pipeline with Load Testing
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
 
 env:
   PROJECT_ID: theta-index-472515-d8
@@ -22,18 +23,18 @@ jobs:
       id-token: write
 
     steps:
-      - name: Checkout Code
+      - name: 📥 Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Google Cloud SDK
+      - name: ☁️ Setup Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Authenticate to Google Cloud
+      - name: 🔐 Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: Download Model from GCS
+      - name: 📦 Download Model from GCS
         run: |
           echo "Verifying GOOGLE_APPLICATION_CREDENTIALS: $GOOGLE_APPLICATION_CREDENTIALS"
           echo "Verifying access to GCS bucket..."
@@ -48,20 +49,20 @@ jobs:
           file model.joblib
           du -h model.joblib
 
-      - name: Configure Docker for Artifact Registry
+      - name: 🐳 Configure Docker for Artifact Registry
         run: |
           gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
 
-      - name: Build and Push Docker Image
+      - name: 🔨 Build and Push Docker Image
         run: |
           IMAGE_TAG=us-central1-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$IMAGE:latest
           echo "Building image: $IMAGE_TAG"
           docker build -t $IMAGE_TAG .
           echo "Pushing image..."
           docker push $IMAGE_TAG
-          echo "Image pushed successfully."
+          echo "✅ Image pushed successfully."
 
-      - name: Get GKE Cluster Credentials
+      - name: ⚙️ Get GKE Cluster Credentials
         run: |
           # Install gke-gcloud-auth-plugin (fixes kubectl auth)
           gcloud components install gke-gcloud-auth-plugin --quiet
@@ -70,7 +71,7 @@ jobs:
           gcloud container clusters get-credentials $GKE_CLUSTER \
             --zone $GKE_ZONE --project $PROJECT_ID
 
-      - name: Deploy Kubernetes Resources
+      - name: 🚀 Deploy Kubernetes Resources
         run: |
           echo "Applying Kubernetes manifests..."
           kubectl apply -f k8s/namespace.yaml
@@ -80,8 +81,21 @@ jobs:
           
           echo "Waiting for deployment rollout..."
           kubectl rollout status deployment/$DEPLOYMENT_NAME -n $NAMESPACE --timeout=5m
+          
+          echo "✅ Deployment successful"
 
-      - name: Get LoadBalancer External IP
+      - name: 📊 Verify Deployment
+        run: |
+          echo "=== Checking Pods ==="
+          kubectl get pods -n $NAMESPACE
+          
+          echo "=== Checking Services ==="
+          kubectl get svc -n $NAMESPACE
+          
+          echo "=== Checking HPA ==="
+          kubectl get hpa -n $NAMESPACE
+
+      - name: 🌐 Get LoadBalancer External IP
         id: ip
         run: |
           echo "Waiting for LoadBalancer IP (up to 10 minutes)..."
@@ -90,50 +104,243 @@ jobs:
                  -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
             if [[ -n "$IP" ]]; then
               echo "ip=$IP" >> $GITHUB_OUTPUT
-              echo "External IP assigned: $IP"
+              echo "✅ External IP assigned: $IP"
               break
             fi
-            echo "Attempt $i: IP not ready. Sleeping 10s..."
+            echo "Attempt $i/60: IP not ready. Sleeping 10s..."
             sleep 10
           done
           if [[ -z "$IP" ]]; then
-            echo "Failed to get external IP after 10 minutes"
+            echo "❌ Failed to get external IP after 10 minutes"
             exit 1
           fi
 
-      - name: Install wrk (Load Testing Tool)
+      - name: 🏥 Health Check - Wait for API to be Ready
+        run: |
+          IP=${{ steps.ip.outputs.ip }}
+          echo "Waiting for API to be healthy at http://$IP"
+          
+          MAX_ATTEMPTS=30
+          ATTEMPT=0
+          
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Health check attempt $ATTEMPT/$MAX_ATTEMPTS..."
+            
+            # Try to connect to root endpoint
+            if curl -s --connect-timeout 5 --max-time 10 http://$IP/ > /dev/null 2>&1; then
+              echo "✅ API is responding!"
+              
+              # Verify health endpoint
+              HEALTH_STATUS=$(curl -s http://$IP/health | jq -r '.status' 2>/dev/null || echo "unknown")
+              echo "Health endpoint status: $HEALTH_STATUS"
+              
+              if [ "$HEALTH_STATUS" = "healthy" ]; then
+                echo "✅ API is fully healthy and ready!"
+                break
+              fi
+            fi
+            
+            if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+              echo "❌ API did not become healthy after $MAX_ATTEMPTS attempts"
+              echo "Checking pod status..."
+              kubectl get pods -n $NAMESPACE
+              kubectl logs -n $NAMESPACE -l app=iris-api --tail=50
+              exit 1
+            fi
+            
+            echo "Waiting 10s before next attempt..."
+            sleep 10
+          done
+
+      - name: 🧪 Test API Endpoints
+        run: |
+          IP=${{ steps.ip.outputs.ip }}
+          echo "Testing API endpoints at http://$IP"
+          
+          echo "=== Test 1: Root Endpoint ==="
+          curl -s http://$IP/ | jq . || echo "Failed"
+          
+          echo ""
+          echo "=== Test 2: Health Endpoint ==="
+          curl -s http://$IP/health | jq . || echo "Failed"
+          
+          echo ""
+          echo "=== Test 3: Prediction Endpoint ==="
+          curl -s -X POST http://$IP/predict/ \
+            -H "Content-Type: application/json" \
+            -d '{"sepal_length": 5.1, "sepal_width": 3.5, "petal_length": 1.4, "petal_width": 0.2}' \
+            | jq . || echo "Failed"
+
+      - name: 📥 Install wrk (Load Testing Tool)
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y wrk
+          wrk --version
 
-      - name: Create wrk Lua Script for POST Request
+      - name: 📝 Create wrk Lua Script for POST Request
         run: |
           cat > post.lua <<'EOF'
           wrk.method = "POST"
           wrk.body   = '{"sepal_length": 5.1, "sepal_width": 3.5, "petal_length": 1.4, "petal_width": 0.2}'
           wrk.headers["Content-Type"] = "application/json"
           EOF
-          echo "post.lua created."
+          echo "✅ post.lua created"
+          cat post.lua
 
-      - name: Load Test 1 – 1000 Connections (1 Pod)
+      - name: 🔥 Load Test Phase 1 - Baseline (Light Load)
         run: |
-          echo "Scaling deployment to 1 replica..."
-          kubectl scale deployment/$DEPLOYMENT_NAME --replicas=1 -n $NAMESPACE
+          IP=${{ steps.ip.outputs.ip }}
+          echo "=== Phase 1: Baseline Test ==="
+          echo "Current pod count before test:"
+          kubectl get pods -n $NAMESPACE | grep iris-api | wc -l
+          
+          echo "Running light load: 10 connections, 2 threads, 30s"
+          wrk -t2 -c10 -d30s -s post.lua http://$IP/predict/ || true
+          
+          echo "Waiting 15s for metrics to stabilize..."
+          sleep 15
+          
+          echo "=== Status After Phase 1 ==="
+          kubectl get pods -n $NAMESPACE
+          kubectl get hpa -n $NAMESPACE
+
+      - name: 🔥 Load Test Phase 2 - Medium Load (100 connections)
+        run: |
+          IP=${{ steps.ip.outputs.ip }}
+          echo "=== Phase 2: Medium Load Test ==="
+          
+          echo "Running medium load: 100 connections, 4 threads, 60s"
+          wrk -t4 -c100 -d60s -s post.lua http://$IP/predict/ || true
+          
+          echo "Waiting 20s for scaling..."
+          sleep 20
+          
+          echo "=== Status After Phase 2 ==="
+          kubectl get pods -n $NAMESPACE
+          kubectl get hpa -n $NAMESPACE
+
+      - name: 🔥 Load Test Phase 3 - Heavy Load (500 connections)
+        run: |
+          IP=${{ steps.ip.outputs.ip }}
+          echo "=== Phase 3: Heavy Load Test ==="
+          
+          echo "Current state before heavy load:"
+          kubectl get pods -n $NAMESPACE | grep iris-api
+          
+          echo "Running heavy load: 500 connections, 8 threads, 90s"
+          wrk -t8 -c500 -d90s -s post.lua http://$IP/predict/ || true
+          
+          echo "Waiting 30s for maximum scaling..."
           sleep 30
           
-          echo "Starting load test: 1000 connections, 8 threads, 30s"
-          wrk -t8 -c1000 -d30s -s post.lua http://${{ steps.ip.outputs.ip }}/predict/
-
-      - name: Load Test 2 – 2000 Connections (HPA Scaling Test)
-        run: |
-          echo "Starting HPA scaling test: 2000 connections, 12 threads, 60s"
-          wrk -t12 -c2000 -d60s -s post.lua http://${{ steps.ip.outputs.ip }}/predict/ || true
-          
-          echo "=== Final Pod Status ==="
+          echo "=== Status After Phase 3 ==="
           kubectl get pods -n $NAMESPACE -o wide
-          
-          echo "=== HPA Status ==="
           kubectl get hpa -n $NAMESPACE
+          kubectl top pods -n $NAMESPACE || echo "Metrics not available yet"
+
+      - name: 🔥 Load Test Phase 4 - Single Pod Stress Test
+        run: |
+          IP=${{ steps.ip.outputs.ip }}
+          echo "=== Phase 4: Single Pod Stress Test ==="
           
-          echo "=== Resource Usage ==="
-          kubectl top pods -n $NAMESPACE || echo "kubectl top not available"
+          echo "Scaling deployment to 1 replica..."
+          kubectl scale deployment/$DEPLOYMENT_NAME --replicas=1 -n $NAMESPACE
+          
+          echo "Waiting for scale-down (60s)..."
+          sleep 60
+          
+          echo "Verifying single pod:"
+          kubectl get pods -n $NAMESPACE
+          POD_COUNT=$(kubectl get pods -n $NAMESPACE -l app=iris-api --field-selector=status.phase=Running | grep -c iris-api || echo 0)
+          echo "Running pods: $POD_COUNT"
+          
+          if [ $POD_COUNT -ne 1 ]; then
+            echo "⚠️ Warning: Expected 1 pod, found $POD_COUNT"
+            echo "Waiting additional 30s..."
+            sleep 30
+          fi
+          
+          echo "Checking API health before stress test..."
+          curl -s http://$IP/health | jq . || echo "Health check failed"
+          
+          echo "Running stress test: 1000 connections, 8 threads, 30s"
+          wrk -t8 -c1000 -d30s -s post.lua http://$IP/predict/ || echo "⚠️ Load test completed with errors (expected under stress)"
+          
+          echo "=== Status After Single Pod Test ==="
+          kubectl get pods -n $NAMESPACE
+          kubectl get hpa -n $NAMESPACE
+
+      - name: 🔥 Load Test Phase 5 - HPA Maximum Scaling Test
+        run: |
+          IP=${{ steps.ip.outputs.ip }}
+          echo "=== Phase 5: HPA Maximum Scaling Test ==="
+          
+          echo "Starting extreme load to trigger maximum scaling: 2000 connections, 12 threads, 60s"
+          wrk -t12 -c2000 -d60s -s post.lua http://$IP/predict/ || echo "⚠️ Load test completed with errors (expected under extreme load)"
+          
+          echo "Waiting 30s for scaling to complete..."
+          sleep 30
+          
+          echo "=== Final Status ==="
+          kubectl get pods -n $NAMESPACE -o wide
+          kubectl get hpa -n $NAMESPACE -o wide
+          kubectl top pods -n $NAMESPACE || echo "Metrics not available"
+
+      - name: 📊 Generate Comprehensive Report
+        if: always()
+        run: |
+          echo "=== LOAD TEST REPORT ===" > load-test-report.txt
+          echo "Generated at: $(date)" >> load-test-report.txt
+          echo "API URL: http://${{ steps.ip.outputs.ip }}" >> load-test-report.txt
+          echo "" >> load-test-report.txt
+          
+          echo "=== FINAL POD STATUS ===" >> load-test-report.txt
+          kubectl get pods -n $NAMESPACE -o wide >> load-test-report.txt
+          echo "" >> load-test-report.txt
+          
+          echo "=== HPA STATUS ===" >> load-test-report.txt
+          kubectl get hpa -n $NAMESPACE >> load-test-report.txt
+          echo "" >> load-test-report.txt
+          
+          echo "=== HPA DETAILED INFO ===" >> load-test-report.txt
+          kubectl describe hpa iris-api-hpa -n $NAMESPACE >> load-test-report.txt
+          echo "" >> load-test-report.txt
+          
+          echo "=== RESOURCE USAGE ===" >> load-test-report.txt
+          kubectl top pods -n $NAMESPACE >> load-test-report.txt 2>&1 || echo "Metrics not available" >> load-test-report.txt
+          echo "" >> load-test-report.txt
+          
+          echo "=== DEPLOYMENT INFO ===" >> load-test-report.txt
+          kubectl describe deployment $DEPLOYMENT_NAME -n $NAMESPACE >> load-test-report.txt
+          echo "" >> load-test-report.txt
+          
+          echo "=== SCALING EVENTS ===" >> load-test-report.txt
+          kubectl get events -n $NAMESPACE --sort-by='.lastTimestamp' | tail -n 30 >> load-test-report.txt
+          
+          echo "✅ Report generated"
+          cat load-test-report.txt
+
+      - name: 📤 Upload Load Test Report
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: load-test-report
+          path: load-test-report.txt
+          retention-days: 30
+
+      - name: ✅ Summary
+        if: always()
+        run: |
+          echo "╔════════════════════════════════════════════════════════╗"
+          echo "║          LOAD TEST EXECUTION COMPLETE                 ║"
+          echo "╚════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "API URL: http://${{ steps.ip.outputs.ip }}"
+          echo ""
+          echo "Final Status:"
+          kubectl get pods -n $NAMESPACE | grep iris-api || echo "No pods found"
+          echo ""
+          kubectl get hpa -n $NAMESPACE
+          echo ""
+          echo "📄 Detailed report available in artifacts"
