@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+model.joblib
+*.json
+*.key
+*.log
+.venv/
