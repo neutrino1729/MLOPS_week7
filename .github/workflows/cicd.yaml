@@ -37,11 +37,11 @@ jobs:
         run: |
           echo "Verifying GOOGLE_APPLICATION_CREDENTIALS: $GOOGLE_APPLICATION_CREDENTIALS"
           echo "Verifying access to GCS bucket..."
-          gsutil ls gs://mlops-course-dulcet-bastion-452612-v4-unique/my-models/feature-store-week-3/ || \
+          gcloud storage ls gs://mlops-course-dulcet-bastion-452612-v4-unique/my-models/feature-store-week-3/ || \
             { echo "Failed to list directory. Check IAM or bucket existence."; exit 1; }
           
           echo "Downloading model: $MODEL_GCS_PATH"
-          gsutil cp "$MODEL_GCS_PATH" ./model.joblib
+          gcloud storage cp "$MODEL_GCS_PATH" ./model.joblib
           
           echo "Model downloaded successfully:"
           ls -lh model.joblib
