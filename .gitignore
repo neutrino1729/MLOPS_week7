@@ -1,7 +1,35 @@
+# Python
 __pycache__/
 *.py[cod]
-model.joblib
+*$py.class
+*.so
+.Python
+env/
+venv/
+*.egg-info/
+
+# Model files (too large for git)
+*.joblib
+*.pkl
+*.h5
+*.pt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Load test outputs
+*.lua
+load-test-report-*.txt
+
+# Kubernetes secrets
+gcp-key.json
 *.json
-*.key
-*.log
-.venv/
+
+# Docker
+*.tar
