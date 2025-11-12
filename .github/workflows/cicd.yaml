@@ -19,11 +19,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write   # needed for workload identity (optional, kept for future)
+      id-token: write
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4   # v4 is stable on 2025 runners
+        uses: actions/checkout@v4
 
       - name: Setup Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
@@ -33,45 +33,44 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      # ---- Export ADC so gsutil can use the key ----
-      - name: Export GCP Credentials for gsutil
+      - name: Write GCP Key to File
+        id: write-key
         run: |
-          echo '${{ secrets.GCP_SA_KEY }}' > $HOME/gcp-key.json
-          echo "GOOGLE_APPLICATION_CREDENTIALS=$HOME/gcp-key.json" >> $GITHUB_ENV
+          echo '${{ secrets.GCP_SA_KEY }}' > /tmp/gcp-key.json
+          echo "key-path=/tmp/gcp-key.json" >> $GITHUB_OUTPUT
 
-      # ---- Download model using gsutil (guaranteed to work) ----
       - name: Download Model from GCS
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.write-key.outputs.key-path }}
         run: |
-          echo "Downloading model from $MODEL_GCS_PATH ..."
+          echo "ADC Path: $GOOGLE_APPLICATION_CREDENTIALS"
+          echo "Testing access: Listing bucket contents..."
+          gsutil ls gs://mlops-course-dulcet-bastion-452612-v4-unique/my-models/ || echo "Access test failed"
+          echo "Downloading model..."
           gsutil cp "$MODEL_GCS_PATH" ./model.joblib
-          echo "Model downloaded:"
-          ls -lh model.joblib
+          echo "Download complete."
 
-      # ---- Optional: verify file integrity (size, type) ----
       - name: Verify Model File
         run: |
+          ls -lh model.joblib
           file model.joblib
           du -h model.joblib
 
-      # ---- Configure Docker for Artifact Registry ----
       - name: Configure Docker Auth
         run: |
           gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
 
-      # ---- Build & Push Container Image ----
       - name: Build and Push Image
         run: |
           IMAGE_TAG=us-central1-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$IMAGE:latest
           docker build -t $IMAGE_TAG .
           docker push $IMAGE_TAG
 
-      # ---- Get GKE Credentials ----
       - name: Fetch GKE Cluster Credentials
         run: |
           gcloud container clusters get-credentials $GKE_CLUSTER \
             --zone $GKE_ZONE --project $PROJECT_ID
 
-      # ---- Apply Kubernetes Manifests ----
       - name: Deploy to GKE
         run: |
           kubectl apply -f k8s/namespace.yaml
@@ -80,7 +79,6 @@ jobs:
           kubectl apply -f k8s/hpa.yaml
           kubectl rollout status deployment/$DEPLOYMENT_NAME -n $NAMESPACE --timeout=5m
 
-      # ---- Wait for External IP ----
       - name: Get LoadBalancer IP
         id: ip
         run: |
@@ -99,13 +97,11 @@ jobs:
           echo "Timed out waiting for IP"
           exit 1
 
-      # ---- Install wrk for load testing ----
       - name: Install wrk
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y wrk
 
-      # ---- Create Lua script for POST body ----
       - name: Create POST Lua Script
         run: |
           cat > post.lua <<'EOF'
@@ -114,7 +110,6 @@ jobs:
           wrk.headers["Content-Type"] = "application/json"
           EOF
 
-      # ---- Load Test 1: 1000 connections, 1 pod ----
       - name: Load Test – 1000 Connections (1 Pod)
         run: |
           kubectl scale deployment/$DEPLOYMENT_NAME --replicas=1 -n $NAMESPACE
@@ -122,7 +117,6 @@ jobs:
           echo "Running wrk: 8 threads, 1000 connections, 30s"
           wrk -t8 -c1000 -d30s -s post.lua http://${{ steps.ip.outputs.ip }}/predict/
 
-      # ---- Load Test 2: 2000 connections (HPA trigger) ----
       - name: Load Test – 2000 Connections (HPA Scaling)
         run: |
           echo "Running wrk: 12 threads, 2000 connections, 60s"
