@@ -63,8 +63,13 @@ jobs:
 
       - name: Get GKE Cluster Credentials
         run: |
+          # Install gke-gcloud-auth-plugin (fixes kubectl auth)
+          gcloud components install gke-gcloud-auth-plugin --quiet
+          
+          # Get credentials (now with plugin)
           gcloud container clusters get-credentials $GKE_CLUSTER \
-            --zone $GKE_ZONE --project $PROJECT_ID
+            --zone $GKE_ZONE --project $PROJECT_ID \
+            --validate=false  # Ignore validation warnings
 
       - name: Deploy Kubernetes Resources
         run: |
